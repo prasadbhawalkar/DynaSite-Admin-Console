@@ -1,0 +1,6 @@
+{
+  "name": "DynSite Admin",
+  "description": "Admin console for provisioning and managing dynamic Google Sites with Sheets and Apps Script integrations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
