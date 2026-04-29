@@ -18,8 +18,8 @@ import {
   Mail
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { AdminSiteData, ProvisionStep } from '@/src/types';
-import { fetchLastRow, provisionSite } from './services/dynSiteService';
+import { AdminSiteData, ProvisionStep, VercelDeploymentResponse } from '@/src/types';
+import { fetchLastRow, provisionSite, deployToVercel } from './services/dynSiteService';
 
 const DEFAULT_DATA: AdminSiteData = {
   site_Number: '',
@@ -35,8 +35,14 @@ const DEFAULT_DATA: AdminSiteData = {
   Site_spreadsheetId: '',
   Site_spreadsheetName: '',
   Site_spreadsheetURL: '',
+  Site_gasScriptID: '',
   Site_gasScriptUrl: '',
-  Site_contactEmail: ''
+  Site_contactEmail: '',
+  Site_gasScriptExecURL: '',
+  Site_VercelGitHubRepo: '',
+  Site_VercelDeployID: '',
+  Site_VercelURL: '',
+  Site_VercelVariables: ''
 };
 
 export default function App() {
@@ -48,6 +54,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<Partial<AdminSiteData> | null>(null);
 
+  // Vercel Deployment States
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [deploymentResult, setDeploymentResult] = useState<VercelDeploymentResponse | null>(null);
+
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -56,22 +66,27 @@ export default function App() {
     setLoading(true);
     setError(null);
     const data = await fetchLastRow();
-    if (data) {
-      setLastRowData(data);
-      // Auto-increment site number if it's a numeric pattern like S001
-      const nextSiteNum = incrementSiteNumber(data.site_Number);
-      setFormData({
-        ...data,
-        site_Number: nextSiteNum,
-        site_Title: `${data.site_Title} (New)`,
-        Site_spreadsheetId: '',
-        Site_spreadsheetName: '',
-        Site_spreadsheetURL: '',
-        Site_gasScriptUrl: '',
-      });
-    } else {
-      setError('Failed to fetch master data. Please check your GAS Web App URL and Spreadsheet Permissions.');
-    }
+      if (data) {
+        setLastRowData(data);
+        // Auto-increment site number if it's a numeric pattern like S001
+        const nextSiteNum = incrementSiteNumber(data.site_Number);
+        setFormData({
+          ...data,
+          site_Number: nextSiteNum,
+          site_Title: `${data.site_Title} (New)`,
+          Site_spreadsheetId: '',
+          Site_spreadsheetName: '',
+          Site_spreadsheetURL: '',
+          Site_gasScriptID: '',
+          Site_gasScriptUrl: '',
+          Site_gasScriptExecURL: '',
+          Site_VercelGitHubRepo: data.Site_VercelGitHubRepo || '',
+          Site_VercelDeployID: '',
+          Site_VercelURL: '',
+        });
+      } else {
+        setError('Registry synchronization failed. Please ensure your Google Apps Script is deployed as a Web App (Access: Anyone) and your Secret Keys (GAS URL & Spreadsheet ID) are correctly configured in AI Studio.');
+      }
     setLoading(false);
   };
 
@@ -94,12 +109,20 @@ export default function App() {
     setShowConfirm(false);
     setProvisioningStep('CREATING_FOLDER');
     setError(null);
+    setDeploymentResult(null);
 
     try {
       const result = await provisionSite(formData);
       if (result.success) {
         setProvisioningStep('COMPLETED');
-        setSuccessData(result.data || {});
+        const updatedSuccessData = {
+          ...result.data,
+          site_Number: formData.site_Number,
+          site_Title: formData.site_Title,
+          Site_VercelGitHubRepo: formData.Site_VercelGitHubRepo,
+          Site_VercelVariables: formData.Site_VercelVariables
+        };
+        setSuccessData(updatedSuccessData);
         // Reload master data to see new last row
         loadInitialData();
       } else {
@@ -110,6 +133,69 @@ export default function App() {
       setProvisioningStep('ERROR');
       setError(err instanceof Error ? err.message : 'Provisioning failed.');
     }
+  };
+
+  const handleDeploy = async () => {
+    const dataToDeploy = successData || lastRowData;
+    
+    if (!dataToDeploy || !dataToDeploy.Site_spreadsheetId || !dataToDeploy.Site_gasScriptUrl) {
+      setError("Please ensure valid site data is available (either provision a new site or check global registry).");
+      return;
+    }
+
+    setIsDeploying(true);
+    setError(null);
+    setDeploymentResult(null);
+
+    const vProjectName = `${dataToDeploy.site_Number}-${dataToDeploy.site_Title}`.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase();
+    
+    // Construct environment variables
+    const envVars: Record<string, string> = {
+      'VITE_DYNSITE_SPREADSHEET_ID': dataToDeploy.Site_spreadsheetId || '',
+      'VITE_DYNSITE_GAS_URL': dataToDeploy.Site_gasScriptUrl || ''
+    };
+
+    // Add additional variables from string (key=value, key=value)
+    if (dataToDeploy.Site_VercelVariables) {
+      const extraVars = dataToDeploy.Site_VercelVariables.split(',').map(v => v.trim()).filter(v => v.includes('='));
+      extraVars.forEach(pair => {
+        const [k, v] = pair.split('=').map(s => s.trim());
+        if (k) envVars[k] = v || '';
+      });
+    }
+
+    try {
+      const result = await deployToVercel({
+        projectName: vProjectName,
+        gitHubRepo: dataToDeploy.Site_VercelGitHubRepo || '',
+        envVars
+      });
+      setDeploymentResult(result);
+      if (!result.success) {
+        setError(result.error || 'Vercel deployment failed.');
+      }
+    } catch (err) {
+      setError('Vercel deployment failed.');
+    } finally {
+      setIsDeploying(false);
+    }
+  };
+
+  const getEffectiveEnvVars = (data: Partial<AdminSiteData> | null) => {
+    if (!data) return [];
+    const vars = [
+      { key: 'VITE_DYNSITE_SPREADSHEET_ID', value: data.Site_spreadsheetId || '' },
+      { key: 'VITE_DYNSITE_GAS_URL', value: data.Site_gasScriptUrl || '' }
+    ];
+    
+    if (data.Site_VercelVariables) {
+      const extraVars = data.Site_VercelVariables.split(',').filter(v => v.trim()).map(v => v.trim());
+      extraVars.forEach(pair => {
+        const [k, v] = pair.split('=').map(s => s.trim());
+        if (k) vars.push({ key: k, value: v || '' });
+      });
+    }
+    return vars;
   };
 
   if (loading) {
@@ -164,61 +250,70 @@ export default function App() {
                 <div className="space-y-4">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-xs text-slate-400 font-medium uppercase mb-0.5">Reference ID</p>
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mb-0.5 tracking-wider">Ref ID / #</p>
                       <p className="font-mono font-bold text-lg text-blue-600">{lastRowData.site_Number}</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-slate-400 font-medium uppercase mb-0.5 text-right">Validity</p>
-                      <p className="text-sm font-medium">{lastRowData.validFrom} — {lastRowData.validTo || '∞'}</p>
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase mb-0.5 tracking-wider">Status</p>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        lastRowData.site_Status === 'ACTIVE' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-slate-50 text-slate-500 border border-slate-100'
+                      }`}>
+                        {lastRowData.site_Status}
+                      </span>
                     </div>
                   </div>
                   
                   <div>
-                    <p className="text-xs text-slate-400 font-medium uppercase mb-0.5">Title & Tagline</p>
-                    <p className="font-semibold text-slate-800">{lastRowData.site_Title}</p>
-                    <p className="text-xs text-slate-500 italic">{lastRowData.site_Tagline}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase mb-0.5 tracking-wider">Identity</p>
+                    <p className="font-bold text-slate-800">{lastRowData.site_Title}</p>
+                    <p className="text-[11px] text-slate-500 italic leading-snug">{lastRowData.site_Tagline}</p>
+                    <p className="text-[11px] text-slate-600 mt-1.5 leading-relaxed">{lastRowData.site_Description}</p>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 pt-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: lastRowData.site_Primary_color }}></div>
-                      <span className="text-xs font-mono text-slate-500">{lastRowData.site_Primary_color}</span>
+                  <div className="grid grid-cols-2 gap-4 py-2 border-y border-slate-50">
+                    <div>
+                      <p className="text-[9px] text-slate-400 font-bold uppercase mb-1">Theme Colors</p>
+                      <div className="flex gap-2">
+                        <div className="w-4 h-4 rounded shadow-sm border border-black/5" style={{ backgroundColor: lastRowData.site_Primary_color }}></div>
+                        <div className="w-4 h-4 rounded shadow-sm border border-black/5" style={{ backgroundColor: lastRowData.site_Secondary_color }}></div>
+                        <span className="text-[10px] font-mono text-slate-400">{lastRowData.site_Primary_color}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: lastRowData.site_Secondary_color }}></div>
-                      <span className="text-xs font-mono text-slate-500">{lastRowData.site_Secondary_color}</span>
+                    <div className="text-right">
+                      <p className="text-[9px] text-slate-400 font-bold uppercase mb-1">Validity</p>
+                      <p className="text-[10px] font-medium">{lastRowData.validFrom} — {lastRowData.validTo || '∞'}</p>
                     </div>
                   </div>
 
-                  <div className="pt-4 border-t border-slate-100 space-y-2">
-                    {lastRowData.Site_spreadsheetURL && (
-                      <a 
-                        href={lastRowData.Site_spreadsheetURL} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="flex items-center justify-between p-2 rounded-lg bg-slate-50 text-xs hover:bg-blue-50 hover:text-blue-600 transition-colors group"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Copy className="w-3.5 h-3.5" />
-                          Site Sheet
-                        </span>
-                        <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </a>
-                    )}
-                    {lastRowData.Site_gasScriptUrl && (
-                      <a 
-                        href={lastRowData.Site_gasScriptUrl} 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="flex items-center justify-between p-2 rounded-lg bg-slate-50 text-xs hover:bg-purple-50 hover:text-purple-600 transition-colors group"
-                      >
-                        <span className="flex items-center gap-2">
-                          <Loader2 className="w-3.5 h-3.5" />
-                          GAS Endpoint
-                        </span>
-                        <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </a>
-                    )}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="pt-2">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Technical Assets</p>
+                      <DetailRow label="SEO Description" value={lastRowData.site_Seo_description} truncate />
+                      <DetailRow label="Spreadsheet ID" value={lastRowData.Site_spreadsheetId} isMono />
+                      <DetailRow label="Spreadsheet URL" value={lastRowData.Site_spreadsheetURL} truncate />
+                      <DetailRow label="GAS Script ID" value={lastRowData.Site_gasScriptID} isMono />
+                      <DetailRow label="GAS Script URL" value={lastRowData.Site_gasScriptUrl} truncate />
+                      <DetailRow label="GAS Exec URL" value={lastRowData.Site_gasScriptExecURL} truncate />
+                    </div>
+
+                    <div className="pt-2">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Cloud Configuration</p>
+                      <DetailRow label="Contact Email" value={lastRowData.Site_contactEmail} />
+                      <DetailRow label="GitHub Repo" value={lastRowData.Site_VercelGitHubRepo} />
+                      <DetailRow label="Vercel URL" value={lastRowData.Site_VercelURL} />
+                      <DetailRow label="Vercel Deploy ID" value={lastRowData.Site_VercelDeployID} isMono />
+                    </div>
+
+                    <div className="pt-2">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2 text-right opacity-50 italic">Registry Metadata</p>
+                      <DetailRow label="Variables" value={lastRowData.Site_VercelVariables} truncate />
+                    </div>
+                    
+                    <div className="mt-4 space-y-2">
+                      <ExternalLinkButton label="View Spreadsheet" href={lastRowData.Site_spreadsheetURL} icon={<Copy className="w-3 h-3" />} />
+                      <ExternalLinkButton label="GAS Endpoint" href={lastRowData.Site_gasScriptUrl} icon={<Loader2 className="w-3 h-3" />} />
+                      <ExternalLinkButton label="GAS Exec URL" href={lastRowData.Site_gasScriptExecURL} icon={<RefreshCw className="w-3 h-3" />} />
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -230,6 +325,7 @@ export default function App() {
             </div>
           </section>
 
+          {/* Provisioning Status */}
           {provisioningStep !== 'IDLE' && (
             <motion.section 
               initial={{ opacity: 0, y: 20 }}
@@ -265,182 +361,220 @@ export default function App() {
                 />
               </div>
 
-              {error && (
+              {provisioningStep === 'COMPLETED' && (
+                <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col gap-3">
+                  <p className="text-xs font-medium text-slate-500">Instance ready! Next step:</p>
+                  <button 
+                    onClick={handleDeploy}
+                    disabled={isDeploying}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-black text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
+                  >
+                    {isDeploying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />}
+                    Deploy to Vercel
+                  </button>
+                  <button 
+                    onClick={() => { setProvisioningStep('IDLE'); setSuccessData(null); setDeploymentResult(null); }}
+                    className="w-full py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium hover:bg-slate-200 transition-colors"
+                  >
+                    Close Provisioning
+                  </button>
+                </div>
+              )}
+
+              {error && provisioningStep !== 'COMPLETED' && (
                 <div className="mt-4 p-3 bg-red-50 border border-red-100 rounded-lg flex gap-3">
                   <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
                   <p className="text-xs text-red-700 leading-relaxed">{error}</p>
                 </div>
               )}
-
-              {provisioningStep === 'COMPLETED' && (
-                <button 
-                  onClick={() => setProvisioningStep('IDLE')}
-                  className="w-full mt-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-                >
-                  Start New Request
-                </button>
-              )}
             </motion.section>
           )}
+
+          {/* Deployment Results Pop-up UI (Section) */}
+          <AnimatePresence>
+            {deploymentResult && (
+              <motion.section
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+                className={`rounded-xl border shadow-sm p-5 ${deploymentResult.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`font-bold text-sm ${deploymentResult.success ? 'text-green-800' : 'text-red-800'}`}>
+                    Vercel Deployment Result
+                  </h3>
+                  <button onClick={() => setDeploymentResult(null)} className="text-slate-400 hover:text-slate-600">×</button>
+                </div>
+                
+                {deploymentResult.success ? (
+                  <div className="space-y-4">
+                    <div className="bg-white/60 p-3 rounded-lg border border-green-100">
+                      <p className="text-[10px] text-green-600 font-bold uppercase mb-1">Deployment ID</p>
+                      <p className="font-mono text-xs text-slate-700 break-all">{deploymentResult.deploymentId}</p>
+                    </div>
+                    <div className="bg-white/60 p-3 rounded-lg border border-green-100">
+                      <p className="text-[10px] text-green-600 font-bold uppercase mb-1">Domain URL</p>
+                      <a href={`https://${deploymentResult.url}`} target="_blank" rel="noreferrer" className="flex items-center justify-between text-xs font-bold text-blue-600 group">
+                        {deploymentResult.url}
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-red-700">{deploymentResult.error}</p>
+                )}
+              </motion.section>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Form Column */}
-        <div className="lg:col-span-8">
+        <div className="lg:col-span-8 flex flex-col gap-8">
+          {/* Frame 1: Site Identity & Core Details */}
           <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
-              <h2 className="font-semibold text-slate-700">Site Provisioning Form</h2>
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+              <Settings className="w-4 h-4 text-slate-500" />
+              <h2 className="font-semibold text-slate-700">Site Identity & Core Details</h2>
             </div>
             
             <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Visual Identity */}
-                <div className="space-y-4">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Identity & Naming</h3>
-                  
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="col-span-1">
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Site #</label>
-                      <input 
-                        type="text" 
-                        name="site_Number"
-                        value={formData.site_Number}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-1">
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Site #</label>
+                        <input 
+                          type="text" 
+                          name="site_Number"
+                          value={formData.site_Number}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Site Title</label>
+                        <input 
+                          type="text" 
+                          name="site_Title"
+                          value={formData.site_Title}
+                          onChange={handleInputChange}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none"
+                          placeholder="Global Marketing Hub"
+                        />
+                      </div>
                     </div>
-                    <div className="col-span-2">
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Site Title</label>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Primary Color</label>
+                        <div className="flex items-center gap-2">
+                          <input type="color" name="site_Primary_color" value={formData.site_Primary_color} onChange={handleInputChange} className="w-8 h-8 rounded-lg overflow-hidden border-none p-0 cursor-pointer shrink-0" />
+                          <input type="text" name="site_Primary_color" value={formData.site_Primary_color} onChange={handleInputChange} className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Secondary Color</label>
+                        <div className="flex items-center gap-2">
+                          <input type="color" name="site_Secondary_color" value={formData.site_Secondary_color} onChange={handleInputChange} className="w-8 h-8 rounded-lg overflow-hidden border-none p-0 cursor-pointer shrink-0" />
+                          <input type="text" name="site_Secondary_color" value={formData.site_Secondary_color} onChange={handleInputChange} className="flex-1 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Tagline</label>
                       <input 
                         type="text" 
-                        name="site_Title"
-                        value={formData.site_Title}
+                        name="site_Tagline"
+                        value={formData.site_Tagline}
                         onChange={handleInputChange}
                         className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                        placeholder="Global Marketing Hub"
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Tagline</label>
-                    <input 
-                      type="text" 
-                      name="site_Tagline"
-                      value={formData.site_Tagline}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                      placeholder="Empowering commerce globally"
-                    />
-                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Description</label>
+                      <textarea 
+                        name="site_Description"
+                        rows={2}
+                        value={formData.site_Description}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                      />
+                    </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-slate-500 mb-1">Description</label>
-                    <textarea 
-                      name="site_Description"
-                      rows={3}
-                      value={formData.site_Description}
-                      onChange={handleInputChange}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-                      placeholder="Describe the purpose of this site instance..."
-                    />
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Contact Email</label>
+                      <input 
+                        type="email" 
+                        name="Site_contactEmail"
+                        value={formData.Site_contactEmail}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        placeholder="Owner email for Drive access"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Status</label>
+                        <select name="site_Status" value={formData.site_Status} onChange={handleInputChange} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                          <option value="ACTIVE">Active</option>
+                          <option value="DRAFT">Draft</option>
+                          <option value="DISABLED">Disabled</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Valid From</label>
+                        <input type="date" name="validFrom" value={formData.validFrom} onChange={handleInputChange} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Valid To</label>
+                      <input type="date" name="validTo" value={formData.validTo} onChange={handleInputChange} className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none" />
+                    </div>
                   </div>
                 </div>
 
-                {/* Configuration */}
-                <div className="space-y-4">
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Parameters & Branding</h3>
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Status</label>
-                      <select 
-                        name="site_Status"
-                        value={formData.site_Status}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                      >
-                        <option value="ACTIVE">Active</option>
-                        <option value="DRAFT">Draft</option>
-                        <option value="DISABLED">Disabled</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Primary Email</label>
-                      <div className="relative">
-                        <Mail className="absolute left-2.5 top-2.5 w-4 h-4 text-slate-400" />
-                        <input 
-                          type="email" 
-                          name="Site_contactEmail"
-                          value={formData.Site_contactEmail}
-                          onChange={handleInputChange}
-                          className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                          placeholder="admin@example.com"
-                        />
-                      </div>
-                    </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">SEO Description</label>
+                    <textarea 
+                      name="site_Seo_description"
+                      rows={4}
+                      value={formData.site_Seo_description}
+                      onChange={handleInputChange}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                    />
                   </div>
-
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="md:col-span-2 grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Primary Color</label>
-                      <div className="flex items-center gap-2">
-                        <input 
-                          type="color" 
-                          name="site_Primary_color"
-                          value={formData.site_Primary_color}
-                          onChange={handleInputChange}
-                          className="w-8 h-8 rounded-lg overflow-hidden border-none p-0 cursor-pointer"
-                        />
-                        <input 
-                          type="text" 
-                          name="site_Primary_color"
-                          value={formData.site_Primary_color}
-                          onChange={handleInputChange}
-                          className="flex-1 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono"
-                        />
-                      </div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Sheet ID</label>
+                      <input type="text" name="Site_spreadsheetId" value={formData.Site_spreadsheetId} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Secondary Color</label>
-                      <div className="flex items-center gap-2">
-                        <input 
-                          type="color" 
-                          name="site_Secondary_color"
-                          value={formData.site_Secondary_color}
-                          onChange={handleInputChange}
-                          className="w-8 h-8 rounded-lg overflow-hidden border-none p-0 cursor-pointer"
-                        />
-                        <input 
-                          type="text" 
-                          name="site_Secondary_color"
-                          value={formData.site_Secondary_color}
-                          onChange={handleInputChange}
-                          className="flex-1 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Valid From</label>
-                      <input 
-                        type="date" 
-                        name="validFrom"
-                        value={formData.validFrom}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Sheet Name</label>
+                      <input type="text" name="Site_spreadsheetName" value={formData.Site_spreadsheetName} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-slate-500 mb-1">Valid To</label>
-                      <input 
-                        type="date" 
-                        name="validTo"
-                        value={formData.validTo}
-                        onChange={handleInputChange}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Sheet URL</label>
+                      <input type="text" name="Site_spreadsheetURL" value={formData.Site_spreadsheetURL} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">GAS Script ID</label>
+                      <input type="text" name="Site_gasScriptID" value={formData.Site_gasScriptID} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">GAS Deployment URL</label>
+                      <input type="text" name="Site_gasScriptUrl" value={formData.Site_gasScriptUrl} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">GAS Exec URL</label>
+                      <input type="text" name="Site_gasScriptExecURL" value={formData.Site_gasScriptExecURL} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                   </div>
                 </div>
@@ -448,12 +582,12 @@ export default function App() {
 
               <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-between">
                 <div className="flex items-center gap-3 text-slate-500">
-                  <div className="p-2 bg-slate-100 rounded-full">
-                    <FolderPlus className="w-4 h-4" />
+                  <div className="p-2 bg-blue-50 border border-blue-100 rounded-lg">
+                    <FolderPlus className="w-4 h-4 text-blue-600" />
                   </div>
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider">Drive Action</p>
-                    <p className="text-xs">Create folder: <span className="font-semibold">{formData.site_Title}</span></p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-blue-600">Phase 1: Registration</p>
+                    <p className="text-xs text-slate-500 italic">Create Google Assets & Folder</p>
                   </div>
                 </div>
 
@@ -461,14 +595,14 @@ export default function App() {
                   <button 
                     disabled={provisioningStep !== 'IDLE'}
                     onClick={() => setFormData(DEFAULT_DATA)}
-                    className="px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-900"
+                    className="px-4 py-2 text-sm font-semibold text-slate-400 hover:text-slate-600"
                   >
-                    Reset Form
+                    Reset
                   </button>
                   <button 
                     disabled={provisioningStep !== 'IDLE'}
                     onClick={() => setShowConfirm(true)}
-                    className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all transform hover:-translate-y-0.5"
+                    className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all transform hover:-translate-y-0.5 active:scale-95"
                   >
                     <PlusCircle className="w-4 h-4" />
                     Provision Site
@@ -477,6 +611,139 @@ export default function App() {
               </div>
             </div>
           </section>
+
+          {/* Frame 2: Technical Deployment Configuration */}
+          <section className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden mb-8">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+              <ExternalLink className="w-4 h-4 text-slate-500" />
+              <h2 className="font-semibold text-slate-700">Deployment & Environment Configuration</h2>
+            </div>
+            
+            <div className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-12 items-start">
+                <div className="space-y-6">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5" />
+                    Source & Variables
+                  </h3>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Vercel GitHub Repository</label>
+                      <input 
+                        type="text" 
+                        name="Site_VercelGitHubRepo"
+                        value={formData.Site_VercelGitHubRepo}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                        placeholder="e.g. prasad-bh/dyn-template"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Custom Environment Variables String</label>
+                      <input 
+                        type="text" 
+                        name="Site_VercelVariables"
+                        value={formData.Site_VercelVariables}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none mb-4"
+                        placeholder="KEY=VALUE, KEY2=VALUE2"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-3">Deployment Row Mapping (Console Values)</p>
+                      <div className="border border-slate-100 rounded-xl overflow-hidden bg-slate-50/30">
+                        <div className="bg-slate-100/50 px-3 py-2 flex justify-between text-[9px] font-black uppercase text-slate-400 border-b border-slate-100">
+                          <span>Variable Name</span>
+                          <span>Assigned Value</span>
+                        </div>
+                        <div className="divide-y divide-slate-50 bg-white">
+                          {getEffectiveEnvVars(successData ? (successData as AdminSiteData) : (lastRowData || formData)).map((env, idx) => (
+                            <div key={idx} className="px-3 py-2 flex justify-between items-center gap-4 hover:bg-slate-50 transition-colors">
+                              <span className="font-mono text-[10px] text-blue-600 font-bold shrink-0">{env.key}</span>
+                              <span className="font-mono text-[10px] text-slate-500 truncate max-w-[250px] text-right">
+                                {env.value || <span className="text-slate-300 italic">pending...</span>}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Cloud Runtime
+                  </h3>
+                  
+                  <div className="p-5 bg-slate-900 text-white rounded-2xl shadow-xl shadow-slate-200/50 space-y-6 border border-slate-800">
+                        <div className="flex justify-between items-center pb-4 border-b border-slate-800">
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Target Instance</p>
+                            <p className="text-sm font-mono text-blue-400 font-bold">
+                              {successData ? successData.site_Number : (lastRowData ? lastRowData.site_Number : 'NONE')}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 font-mono">
+                              {successData ? (successData.site_Title || formData.site_Title) : (lastRowData?.site_Title || 'No Title')}
+                            </p>
+                            <span className={`text-[10px] px-2 py-0.5 rounded font-black ${successData ? 'bg-blue-500 text-white' : 'bg-slate-800 text-slate-400'}`}>
+                              {successData ? 'NEW PROVISION' : 'EXISTING REGISTRY'}
+                            </span>
+                          </div>
+                        </div>
+
+                    <div className="space-y-3">
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Active Deployment ID</p>
+                        <p className="text-[10px] font-mono text-slate-300 bg-white/5 p-2 rounded border border-white/5 break-all leading-relaxed">
+                          {lastRowData?.Site_VercelDeployID || 'No active deployment recorded'}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Production URL</p>
+                        <div className="flex items-center gap-2 bg-blue-500/10 p-2 rounded border border-blue-500/20">
+                          <ExternalLink className="w-3 h-3 text-blue-400 shrink-0" />
+                          <a 
+                            href={lastRowData?.Site_VercelURL?.startsWith('http') ? lastRowData.Site_VercelURL : `https://${lastRowData?.Site_VercelURL}`} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-[11px] font-mono text-blue-300 hover:text-blue-200 transition-colors truncate"
+                          >
+                            {lastRowData?.Site_VercelURL || 'https://---'}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={handleDeploy}
+                      disabled={isDeploying || (!successData && !lastRowData)}
+                      className="w-full py-3.5 bg-white text-black rounded-xl text-xs font-black shadow-lg shadow-black/20 hover:bg-slate-200 transition-all flex items-center justify-center gap-3 disabled:opacity-50 active:scale-95 translate-y-2"
+                    >
+                      {isDeploying ? <Loader2 className="w-5 h-5 animate-spin" /> : <ExternalLink className="w-5 h-5" />}
+                      EXECUTE CLOUD DEPLOYMENT
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {error && provisioningStep === 'IDLE' && !isDeploying && (
+             <div className="mt-8 p-4 bg-red-50 border border-red-100 rounded-xl flex gap-4">
+              <AlertCircle className="w-6 h-6 text-red-500 shrink-0" />
+              <div>
+                <h4 className="text-sm font-bold text-red-800">System Error</h4>
+                <p className="text-xs text-red-700 mt-1 leading-relaxed">{error}</p>
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -554,5 +821,34 @@ function StatusItem({ label, isActive, isDone }: { label: string, isActive: bool
       </div>
       <span className="text-xs font-medium">{label}</span>
     </div>
+  );
+}
+
+function DetailRow({ label, value, isMono = false, truncate = false }: { label: string, value?: string, isMono?: boolean, truncate?: boolean }) {
+  return (
+    <div className="flex justify-between items-center py-1 border-b border-slate-50 text-[10px]">
+      <span className="text-slate-400 font-bold uppercase tracking-tighter">{label}</span>
+      <span className={`text-slate-600 font-medium ${isMono ? 'font-mono' : ''} ${truncate ? 'truncate max-w-[180px]' : ''}`}>
+        {value || <span className="text-slate-300">N/A</span>}
+      </span>
+    </div>
+  );
+}
+
+function ExternalLinkButton({ label, href, icon }: { label: string, href?: string, icon: React.ReactNode }) {
+  if (!href) return null;
+  return (
+    <a 
+      href={href} 
+      target="_blank" 
+      rel="noreferrer"
+      className="flex items-center justify-between p-2 rounded-lg bg-slate-50 text-[10px] font-bold text-slate-700 hover:bg-blue-50 hover:text-blue-600 transition-colors group border border-slate-100"
+    >
+      <span className="flex items-center gap-2">
+        {icon}
+        {label}
+      </span>
+      <ExternalLink className="w-2.5 h-2.5 opacity-40 group-hover:opacity-100 transition-opacity" />
+    </a>
   );
 }

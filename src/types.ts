@@ -17,8 +17,14 @@ export interface AdminSiteData {
   Site_spreadsheetId: string;
   Site_spreadsheetName: string;
   Site_spreadsheetURL: string;
+  Site_gasScriptID: string;
   Site_gasScriptUrl: string;
   Site_contactEmail: string;
+  Site_gasScriptExecURL: string;
+  Site_VercelGitHubRepo: string;
+  Site_VercelDeployID: string;
+  Site_VercelURL: string;
+  Site_VercelVariables: string;
 }
 
 export type ProvisionStep = 'IDLE' | 'CREATING_FOLDER' | 'COPYING_SHEET' | 'COPYING_SCRIPT' | 'UPDATING_ADMIN' | 'COMPLETED' | 'ERROR';
@@ -27,5 +33,12 @@ export interface ProvisionResponse {
   success: boolean;
   message: string;
   data?: Partial<AdminSiteData>;
+  error?: string;
+}
+
+export interface VercelDeploymentResponse {
+  success: boolean;
+  deploymentId?: string;
+  url?: string;
   error?: string;
 }

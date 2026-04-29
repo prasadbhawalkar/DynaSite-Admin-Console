@@ -18,10 +18,22 @@ function doPost(e) {
     const data = JSON.parse(e.postData.contents);
     const action = data.action;
 
+    // Determine Spreadsheet ID from various sources
+    // Priority: URL Param > JSON Payload > Script Property
+    const adminSpreadsheetId = e.parameter.spreadsheetId || 
+                               data.adminSpreadsheetId || 
+                               PropertiesService.getScriptProperties().getProperty('ADMIN_SPREADSHEET_ID');
+
+    if (!adminSpreadsheetId) {
+      return response({ success: false, message: 'Missing Admin Spreadsheet ID. Please provide via URL parameter, payload, or Script Properties.' });
+    }
+
     if (action === 'getLastRow') {
-      return handleGetLastRow(data);
+      return handleGetLastRow(adminSpreadsheetId);
     } else if (action === 'provision') {
-      return handleProvision(data);
+      return handleProvision(adminSpreadsheetId, data);
+    } else {
+      return handleGetLastRow(adminSpreadsheetId);
     }
 
     return response({ success: false, message: 'Invalid action' });
@@ -30,8 +42,8 @@ function doPost(e) {
   }
 }
 
-function handleGetLastRow(data) {
-  const ss = SpreadsheetApp.openById(data.adminSpreadsheetId);
+function handleGetLastRow(spreadsheetId) {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
   const sheet = ss.getSheetByName('admin');
   const lastRow = sheet.getLastRow();
   
@@ -48,14 +60,16 @@ function handleGetLastRow(data) {
   return response({ success: true, data: result });
 }
 
-function handleProvision(params) {
-  const adminSs = SpreadsheetApp.openById(params.adminSpreadsheetId);
+function handleProvision(spreadsheetId, params) {
+  const adminSs = SpreadsheetApp.openById(spreadsheetId);
   const adminSheet = adminSs.getSheetByName('admin');
   const data = params.siteData;
 
-  // 1. Create Folder
-  const parentFolder = DriveApp.getRootFolder(); // Or specify a specific parent ID
-  const newFolder = parentFolder.createFolder(data.site_Title);
+  // 1. Create Folder (In the same parent folder as the Admin Spreadsheet)
+  const adminFile = DriveApp.getFileById(spreadsheetId);
+  const parentFolders = adminFile.getParents();
+  const parentFolder = parentFolders.hasNext() ? parentFolders.next() : DriveApp.getRootFolder();
+  const newFolder = parentFolder.createFolder(data.site_Number + " - " + data.site_Title);
   
   // 2. Copy Template Spreadsheet
   const templateSheetFile = DriveApp.getFileById(params.templateSheetId);
@@ -65,47 +79,59 @@ function handleProvision(params) {
 
   // 3. Copy Template GAS Script (if standalone)
   let newGasUrl = "";
+  let newGasId = "";
   if (params.templateGasId) {
-    const templateGasFile = DriveApp.getFileById(params.templateGasId);
-    const newGasFile = templateGasFile.makeCopy(data.site_Title + " Script", newFolder);
-    newGasUrl = "https://script.google.com/d/" + newGasFile.getId() + "/edit";
-    
-    // Add editor access if email provided
-    if (data.Site_contactEmail) {
-      try {
+    try {
+      const templateGasFile = DriveApp.getFileById(params.templateGasId);
+      const newGasFile = templateGasFile.makeCopy(data.site_Title + " Script", newFolder);
+      newGasId = newGasFile.getId();
+      newGasUrl = "https://script.google.com/d/" + newGasId + "/edit";
+      
+      // Add editor access if email provided
+      if (data.Site_contactEmail) {
         newGasFile.addEditor(data.Site_contactEmail);
-      } catch(e) {}
+      }
+    } catch(e) {
+      console.warn("Failed to copy GAS script: " + e.toString());
     }
   }
 
-  // 4. Add editor to spreadsheet
+  // 4. Add editor to spreadsheet and folder
   if (data.Site_contactEmail) {
     try {
       newSheetFile.addEditor(data.Site_contactEmail);
       newFolder.addEditor(data.Site_contactEmail);
-    } catch(e) {}
+    } catch(e) {
+      console.warn("Failed to add editor: " + e.toString());
+    }
   }
 
   // 5. Update Admin Sheet
   const headers = adminSheet.getRange(1, 1, 1, adminSheet.getLastColumn()).getValues()[0];
   const newRow = headers.map(header => {
+    // Dynamic fields generated during provision
     if (header === 'Site_spreadsheetId') return newSheetId;
     if (header === 'Site_spreadsheetName') return data.site_Title + " Sheet";
     if (header === 'Site_spreadsheetURL') return newSheetUrl;
     if (header === 'Site_gasScriptUrl') return newGasUrl;
-    return data[header] || "";
+    if (header === 'Site_gasScriptID') return newGasId || params.templateGasId || "";
+    
+    // User provided fields or existing data mapping
+    return data[header] !== undefined ? data[header] : "";
   });
 
   adminSheet.appendRow(newRow);
 
+  // Return the full mapped data object for frontend state consistency
+  const responseData = {};
+  headers.forEach((header, index) => {
+    responseData[header] = newRow[index];
+  });
+
   return response({ 
     success: true, 
     message: 'Provisioned successfully',
-    data: {
-      Site_spreadsheetId: newSheetId,
-      Site_spreadsheetURL: newSheetUrl,
-      Site_gasScriptUrl: newGasUrl
-    }
+    data: responseData
   });
 }
 
@@ -123,12 +149,21 @@ function response(obj) {
 5. Who has access: **Anyone**.
 6. Click **Deploy**.
 7. Copy the **Web App URL**.
+8. **Optional (Secure Setup):** In the GAS editor, go to **Project Settings** (gear icon) > **Script Properties** > **Add script property**. Add `ADMIN_SPREADSHEET_ID` with your Master Spreadsheet ID as the value.
 
-## 3. Configure the React App
+## 3. Spreadsheet Structure
+Ensure your **Admin** sheet has exactly these header names in the first row (casing and underscores matter) for correct field mapping:
+`site_Number`, `site_Title`, `site_Status`, `site_Description`, `site_Tagline`, `site_Primary_color`, `site_Secondary_color`, `site_Seo_description`, `validFrom`, `validTo`, `Site_spreadsheetId`, `Site_spreadsheetName`, `Site_spreadsheetURL`, `Site_gasScriptID`, `Site_gasScriptUrl`, `Site_contactEmail`, `Site_gasScriptExecURL`, `Site_VercelGitHubRepo`, `Site_VercelDeployID`, `Site_VercelURL`, `Site_VercelVariables`
+
+## 4. Configure the React App
 1. Open the AI Studio project.
-2. Open the **Secrets** or **Settings** panel (or modify `.env`).
-3. Set `VITE_CONSOLE_GAS_URL` to the URL you copied in the previous step.
-4. Set the other required IDs:
-   - `VITE_ADMIN_SPREADSHEET_ID`: ID of your Master Admin sheet.
-   - `VITE_TEMPLATE_SPREADSHEET_ID`: ID of the sheet to clone.
-   - `VITE_TEMPLATE_GAS_ID`: ID of the GAS project to clone (optional).
+2. Go to **Settings** > **Secrets**.
+3. Add/Update the following secrets:
+   - `VITE_CONSOLE_GAS_URL`: Your deployed GAS Web App URL.
+   - `VITE_ADMIN_SPREADSHEET_ID`: The ID of your Master Spreadsheet.
+   - `VITE_TEMPLATE_SPREADSHEET_ID`: The ID of the Spreadsheet template to clone.
+   - `VITE_TEMPLATE_GAS_ID`: The ID of the Script template to clone.
+   - `VITE_VERCEL_TOKEN`: Your Vercel API Token.
+   - `VITE_VERCEL_ORG_ID`: Your Vercel User/Team ID.
+
+4. **Restart the dev server** in AI Studio after adding secrets.

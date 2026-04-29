@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AdminSiteData, ProvisionResponse } from '@/src/types';
+import { AdminSiteData, ProvisionResponse, VercelDeploymentResponse } from '@/src/types';
 
 const GAS_URL = import.meta.env.VITE_CONSOLE_GAS_URL;
 const ADMIN_SPREADSHEET_ID = import.meta.env.VITE_ADMIN_SPREADSHEET_ID;
@@ -31,10 +31,12 @@ export async function fetchLastRow(): Promise<AdminSiteData | null> {
     const result = await response.json();
     if (result.success && result.data) {
       return result.data as AdminSiteData;
+    } else {
+      console.warn('GAS script returned failure:', result);
     }
     return null;
   } catch (error) {
-    console.error('Error fetching last row:', error);
+    console.error('Network or Parse error in fetchLastRow:', error);
     return null;
   }
 }
@@ -67,6 +69,26 @@ export async function provisionSite(data: AdminSiteData): Promise<ProvisionRespo
       success: false,
       message: 'Network error or server-side script failed.',
       error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function deployToVercel(params: {
+  projectName: string;
+  gitHubRepo: string;
+  envVars: Record<string, string>;
+}): Promise<VercelDeploymentResponse> {
+  try {
+    const response = await fetch('/api/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await response.json();
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Deployment request failed'
     };
   }
 }
