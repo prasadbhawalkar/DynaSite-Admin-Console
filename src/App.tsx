@@ -114,7 +114,10 @@ export default function App() {
     setDeploymentResult(null);
 
     try {
-      const result = await provisionSite(formData);
+      const result = await provisionSite(formData, {
+        templateSheetId: lastRowData?.site_spreadsheetId || undefined,
+        templateGasId: lastRowData?.site_gasScriptID || undefined
+      });
       if (result.success) {
         setProvisioningStep('COMPLETED');
         const updatedSuccessData = {

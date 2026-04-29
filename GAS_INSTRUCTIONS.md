@@ -73,7 +73,7 @@ function handleProvision(spreadsheetId, params) {
   
   // 2. Copy Template Spreadsheet
   const templateSheetFile = DriveApp.getFileById(params.templateSheetId);
-  const newSheetFile = templateSheetFile.makeCopy(data.site_Title + " Sheet", newFolder);
+  const newSheetFile = templateSheetFile.makeCopy(data.site_Title, newFolder);
   const newSheetId = newSheetFile.getId();
   const newSheetUrl = newSheetFile.getUrl();
 
@@ -83,7 +83,7 @@ function handleProvision(spreadsheetId, params) {
   if (params.templateGasId) {
     try {
       const templateGasFile = DriveApp.getFileById(params.templateGasId);
-      const newGasFile = templateGasFile.makeCopy(data.site_Title + " Script", newFolder);
+      const newGasFile = templateGasFile.makeCopy(data.site_Title, newFolder);
       newGasId = newGasFile.getId();
       newGasUrl = "https://script.google.com/d/" + newGasId + "/edit";
       
@@ -111,10 +111,11 @@ function handleProvision(spreadsheetId, params) {
   const newRow = headers.map(header => {
     // Dynamic fields generated during provision
     if (header === 'site_spreadsheetId') return newSheetId;
-    if (header === 'site_spreadsheetName') return data.site_Title + " Sheet";
+    if (header === 'site_spreadsheetName') return data.site_Title;
     if (header === 'site_spreadsheetURL') return newSheetUrl;
     if (header === 'site_gasScriptUrl') return newGasUrl;
     if (header === 'site_gasScriptID') return newGasId || params.templateGasId || "";
+    if (header === 'site_gasScriptExecURL') return ""; // Cannot be determined until manual deployment
     
     // User provided fields or existing data mapping
     return data[header] !== undefined ? data[header] : "";

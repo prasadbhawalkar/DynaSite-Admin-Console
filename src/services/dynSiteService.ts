@@ -41,7 +41,7 @@ export async function fetchLastRow(): Promise<AdminSiteData | null> {
   }
 }
 
-export async function provisionSite(data: AdminSiteData): Promise<ProvisionResponse> {
+export async function provisionSite(data: AdminSiteData, overrides?: { templateSheetId?: string; templateGasId?: string }): Promise<ProvisionResponse> {
   if (!GAS_URL) {
     throw new Error('VITE_CONSOLE_GAS_URL is not defined');
   }
@@ -55,8 +55,8 @@ export async function provisionSite(data: AdminSiteData): Promise<ProvisionRespo
       body: JSON.stringify({
         action: 'provision',
         adminSpreadsheetId: ADMIN_SPREADSHEET_ID,
-        templateSheetId: TEMPLATE_SHEET_ID,
-        templateGasId: TEMPLATE_GAS_ID,
+        templateSheetId: overrides?.templateSheetId || TEMPLATE_SHEET_ID,
+        templateGasId: overrides?.templateGasId || TEMPLATE_GAS_ID,
         siteData: data,
       }),
     });
