@@ -11,7 +11,7 @@ async function startServer() {
 
   // Vercel Deployment API
   app.post("/api/deploy", async (req, res) => {
-    const { projectName, gitHubRepo, envVars, vercelToken } = req.body;
+    const { projectName, repoName, repoId, envVars, vercelToken } = req.body;
     const token = vercelToken || process.env.VERCEL_TOKEN;
 
     if (!token) {
@@ -19,12 +19,7 @@ async function startServer() {
     }
 
     try {
-      // 1. Get or Create Project
-      // Note: This is a simplified flow. Vercel API usually requires teamId or user context.
-      // We'll attempt to create a deployment directly if the repo is already connected, 
-      // or use the 'projects' API to configure first.
-      
-      console.log(`Starting deployment for ${projectName} from ${gitHubRepo}`);
+      console.log(`Starting deployment for ${projectName} from ${repoName} (ID: ${repoId})`);
 
       // Setup project and env vars via Vercel API
       // First, get project ID or create it
@@ -59,15 +54,12 @@ async function startServer() {
       }
 
       // 3. Trigger Deployment
-      // This assumes the GitHub repo is already connected to your Vercel account
-      // For a fully automated "new repo" flow, more OAuth steps are needed.
-      // We will trigger a deployment using the project's git metadata
       const deployRes = await axios.post("https://api.vercel.com/v13/deployments", {
         name: projectName,
         project: projectId,
         gitSource: {
           type: "github",
-          repo: gitHubRepo, // format "username/repo"
+          repoId: repoId ? parseInt(String(repoId), 10) : undefined,
           ref: "main"
         }
       }, {

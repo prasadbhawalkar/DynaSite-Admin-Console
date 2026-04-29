@@ -14,17 +14,18 @@ export interface AdminSiteData {
   site_Seo_description: string;
   validFrom: string;
   validTo: string;
-  Site_spreadsheetId: string;
-  Site_spreadsheetName: string;
-  Site_spreadsheetURL: string;
-  Site_gasScriptID: string;
-  Site_gasScriptUrl: string;
-  Site_contactEmail: string;
-  Site_gasScriptExecURL: string;
-  Site_VercelGitHubRepo: string;
-  Site_VercelDeployID: string;
-  Site_VercelURL: string;
-  Site_VercelVariables: string;
+  site_spreadsheetId: string;
+  site_spreadsheetName: string;
+  site_spreadsheetURL: string;
+  site_gasScriptID: string;
+  site_gasScriptUrl: string;
+  site_contactEmail: string;
+  site_gasScriptExecURL: string;
+  site_VercelGitHubRepo: string;
+  site_VercelGitHubRepoID: string;
+  site_VercelDeployID: string;
+  site_VercelURL: string;
+  site_VercelVariables: string;
 }
 
 export type ProvisionStep = 'IDLE' | 'CREATING_FOLDER' | 'COPYING_SHEET' | 'COPYING_SCRIPT' | 'UPDATING_ADMIN' | 'COMPLETED' | 'ERROR';

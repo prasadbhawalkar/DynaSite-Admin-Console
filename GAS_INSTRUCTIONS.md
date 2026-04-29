@@ -88,8 +88,8 @@ function handleProvision(spreadsheetId, params) {
       newGasUrl = "https://script.google.com/d/" + newGasId + "/edit";
       
       // Add editor access if email provided
-      if (data.Site_contactEmail) {
-        newGasFile.addEditor(data.Site_contactEmail);
+      if (data.site_contactEmail) {
+        newGasFile.addEditor(data.site_contactEmail);
       }
     } catch(e) {
       console.warn("Failed to copy GAS script: " + e.toString());
@@ -97,10 +97,10 @@ function handleProvision(spreadsheetId, params) {
   }
 
   // 4. Add editor to spreadsheet and folder
-  if (data.Site_contactEmail) {
+  if (data.site_contactEmail) {
     try {
-      newSheetFile.addEditor(data.Site_contactEmail);
-      newFolder.addEditor(data.Site_contactEmail);
+      newSheetFile.addEditor(data.site_contactEmail);
+      newFolder.addEditor(data.site_contactEmail);
     } catch(e) {
       console.warn("Failed to add editor: " + e.toString());
     }
@@ -110,11 +110,11 @@ function handleProvision(spreadsheetId, params) {
   const headers = adminSheet.getRange(1, 1, 1, adminSheet.getLastColumn()).getValues()[0];
   const newRow = headers.map(header => {
     // Dynamic fields generated during provision
-    if (header === 'Site_spreadsheetId') return newSheetId;
-    if (header === 'Site_spreadsheetName') return data.site_Title + " Sheet";
-    if (header === 'Site_spreadsheetURL') return newSheetUrl;
-    if (header === 'Site_gasScriptUrl') return newGasUrl;
-    if (header === 'Site_gasScriptID') return newGasId || params.templateGasId || "";
+    if (header === 'site_spreadsheetId') return newSheetId;
+    if (header === 'site_spreadsheetName') return data.site_Title + " Sheet";
+    if (header === 'site_spreadsheetURL') return newSheetUrl;
+    if (header === 'site_gasScriptUrl') return newGasUrl;
+    if (header === 'site_gasScriptID') return newGasId || params.templateGasId || "";
     
     // User provided fields or existing data mapping
     return data[header] !== undefined ? data[header] : "";
@@ -153,7 +153,7 @@ function response(obj) {
 
 ## 3. Spreadsheet Structure
 Ensure your **Admin** sheet has exactly these header names in the first row (casing and underscores matter) for correct field mapping:
-`site_Number`, `site_Title`, `site_Status`, `site_Description`, `site_Tagline`, `site_Primary_color`, `site_Secondary_color`, `site_Seo_description`, `validFrom`, `validTo`, `Site_spreadsheetId`, `Site_spreadsheetName`, `Site_spreadsheetURL`, `Site_gasScriptID`, `Site_gasScriptUrl`, `Site_contactEmail`, `Site_gasScriptExecURL`, `Site_VercelGitHubRepo`, `Site_VercelDeployID`, `Site_VercelURL`, `Site_VercelVariables`
+`site_Number`, `site_Title`, `site_Status`, `site_Description`, `site_Tagline`, `site_Primary_color`, `site_Secondary_color`, `site_Seo_description`, `validFrom`, `validTo`, `site_spreadsheetId`, `site_spreadsheetName`, `site_spreadsheetURL`, `site_gasScriptID`, `site_gasScriptUrl`, `site_contactEmail`, `site_gasScriptExecURL`, `site_VercelGitHubRepo`, `site_VercelGitHubRepoID`, `site_VercelDeployID`, `site_VercelURL`, `site_VercelVariables`
 
 ## 4. Configure the React App
 1. Open the AI Studio project.

@@ -32,17 +32,18 @@ const DEFAULT_DATA: AdminSiteData = {
   site_Seo_description: '',
   validFrom: new Date().toISOString().split('T')[0],
   validTo: '',
-  Site_spreadsheetId: '',
-  Site_spreadsheetName: '',
-  Site_spreadsheetURL: '',
-  Site_gasScriptID: '',
-  Site_gasScriptUrl: '',
-  Site_contactEmail: '',
-  Site_gasScriptExecURL: '',
-  Site_VercelGitHubRepo: '',
-  Site_VercelDeployID: '',
-  Site_VercelURL: '',
-  Site_VercelVariables: ''
+  site_spreadsheetId: '',
+  site_spreadsheetName: '',
+  site_spreadsheetURL: '',
+  site_gasScriptID: '',
+  site_gasScriptUrl: '',
+  site_contactEmail: '',
+  site_gasScriptExecURL: '',
+  site_VercelGitHubRepo: '',
+  site_VercelGitHubRepoID: '',
+  site_VercelDeployID: '',
+  site_VercelURL: '',
+  site_VercelVariables: ''
 };
 
 export default function App() {
@@ -74,15 +75,16 @@ export default function App() {
           ...data,
           site_Number: nextSiteNum,
           site_Title: `${data.site_Title} (New)`,
-          Site_spreadsheetId: '',
-          Site_spreadsheetName: '',
-          Site_spreadsheetURL: '',
-          Site_gasScriptID: '',
-          Site_gasScriptUrl: '',
-          Site_gasScriptExecURL: '',
-          Site_VercelGitHubRepo: data.Site_VercelGitHubRepo || '',
-          Site_VercelDeployID: '',
-          Site_VercelURL: '',
+          site_spreadsheetId: '',
+          site_spreadsheetName: '',
+          site_spreadsheetURL: '',
+          site_gasScriptID: '',
+          site_gasScriptUrl: '',
+          site_gasScriptExecURL: '',
+          site_VercelGitHubRepo: data.site_VercelGitHubRepo || '',
+          site_VercelGitHubRepoID: data.site_VercelGitHubRepoID || '',
+          site_VercelDeployID: '',
+          site_VercelURL: '',
         });
       } else {
         setError('Registry synchronization failed. Please ensure your Google Apps Script is deployed as a Web App (Access: Anyone) and your Secret Keys (GAS URL & Spreadsheet ID) are correctly configured in AI Studio.');
@@ -119,8 +121,9 @@ export default function App() {
           ...result.data,
           site_Number: formData.site_Number,
           site_Title: formData.site_Title,
-          Site_VercelGitHubRepo: formData.Site_VercelGitHubRepo,
-          Site_VercelVariables: formData.Site_VercelVariables
+          site_VercelGitHubRepo: formData.site_VercelGitHubRepo,
+          site_VercelGitHubRepoID: formData.site_VercelGitHubRepoID,
+          site_VercelVariables: formData.site_VercelVariables
         };
         setSuccessData(updatedSuccessData);
         // Reload master data to see new last row
@@ -138,7 +141,7 @@ export default function App() {
   const handleDeploy = async () => {
     const dataToDeploy = successData || lastRowData;
     
-    if (!dataToDeploy || !dataToDeploy.Site_spreadsheetId || !dataToDeploy.Site_gasScriptUrl) {
+    if (!dataToDeploy || !dataToDeploy.site_spreadsheetId || !dataToDeploy.site_gasScriptUrl) {
       setError("Please ensure valid site data is available (either provision a new site or check global registry).");
       return;
     }
@@ -151,13 +154,13 @@ export default function App() {
     
     // Construct environment variables
     const envVars: Record<string, string> = {
-      'VITE_DYNSITE_SPREADSHEET_ID': dataToDeploy.Site_spreadsheetId || '',
-      'VITE_DYNSITE_GAS_URL': dataToDeploy.Site_gasScriptUrl || ''
+      'VITE_DYNSITE_SPREADSHEET_ID': dataToDeploy.site_spreadsheetId || '',
+      'VITE_DYNSITE_GAS_URL': dataToDeploy.site_gasScriptUrl || ''
     };
 
     // Add additional variables from string (key=value, key=value)
-    if (dataToDeploy.Site_VercelVariables) {
-      const extraVars = dataToDeploy.Site_VercelVariables.split(',').map(v => v.trim()).filter(v => v.includes('='));
+    if (dataToDeploy.site_VercelVariables) {
+      const extraVars = dataToDeploy.site_VercelVariables.split(',').map(v => v.trim()).filter(v => v.includes('='));
       extraVars.forEach(pair => {
         const [k, v] = pair.split('=').map(s => s.trim());
         if (k) envVars[k] = v || '';
@@ -167,7 +170,8 @@ export default function App() {
     try {
       const result = await deployToVercel({
         projectName: vProjectName,
-        gitHubRepo: dataToDeploy.Site_VercelGitHubRepo || '',
+        repoName: dataToDeploy.site_VercelGitHubRepo || '',
+        repoId: dataToDeploy.site_VercelGitHubRepoID || '',
         envVars
       });
       setDeploymentResult(result);
@@ -184,12 +188,12 @@ export default function App() {
   const getEffectiveEnvVars = (data: Partial<AdminSiteData> | null) => {
     if (!data) return [];
     const vars = [
-      { key: 'VITE_DYNSITE_SPREADSHEET_ID', value: data.Site_spreadsheetId || '' },
-      { key: 'VITE_DYNSITE_GAS_URL', value: data.Site_gasScriptUrl || '' }
+      { key: 'VITE_DYNSITE_SPREADSHEET_ID', value: data.site_spreadsheetId || '' },
+      { key: 'VITE_DYNSITE_GAS_URL', value: data.site_gasScriptUrl || '' }
     ];
     
-    if (data.Site_VercelVariables) {
-      const extraVars = data.Site_VercelVariables.split(',').filter(v => v.trim()).map(v => v.trim());
+    if (data.site_VercelVariables) {
+      const extraVars = data.site_VercelVariables.split(',').filter(v => v.trim()).map(v => v.trim());
       extraVars.forEach(pair => {
         const [k, v] = pair.split('=').map(s => s.trim());
         if (k) vars.push({ key: k, value: v || '' });
@@ -289,30 +293,31 @@ export default function App() {
                     <div className="pt-2">
                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Technical Assets</p>
                       <DetailRow label="SEO Description" value={lastRowData.site_Seo_description} truncate />
-                      <DetailRow label="Spreadsheet ID" value={lastRowData.Site_spreadsheetId} isMono />
-                      <DetailRow label="Spreadsheet URL" value={lastRowData.Site_spreadsheetURL} truncate />
-                      <DetailRow label="GAS Script ID" value={lastRowData.Site_gasScriptID} isMono />
-                      <DetailRow label="GAS Script URL" value={lastRowData.Site_gasScriptUrl} truncate />
-                      <DetailRow label="GAS Exec URL" value={lastRowData.Site_gasScriptExecURL} truncate />
+                      <DetailRow label="Spreadsheet ID" value={lastRowData.site_spreadsheetId} isMono />
+                      <DetailRow label="Spreadsheet URL" value={lastRowData.site_spreadsheetURL} truncate />
+                      <DetailRow label="GAS Script ID" value={lastRowData.site_gasScriptID} isMono />
+                      <DetailRow label="GAS Script URL" value={lastRowData.site_gasScriptUrl} truncate />
+                      <DetailRow label="GAS Exec URL" value={lastRowData.site_gasScriptExecURL} truncate />
                     </div>
 
                     <div className="pt-2">
                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Cloud Configuration</p>
-                      <DetailRow label="Contact Email" value={lastRowData.Site_contactEmail} />
-                      <DetailRow label="GitHub Repo" value={lastRowData.Site_VercelGitHubRepo} />
-                      <DetailRow label="Vercel URL" value={lastRowData.Site_VercelURL} />
-                      <DetailRow label="Vercel Deploy ID" value={lastRowData.Site_VercelDeployID} isMono />
+                      <DetailRow label="Contact Email" value={lastRowData.site_contactEmail} />
+                      <DetailRow label="GitHub Repo" value={lastRowData.site_VercelGitHubRepo} />
+                      <DetailRow label="GitHub Repo ID" value={lastRowData.site_VercelGitHubRepoID} />
+                      <DetailRow label="Vercel URL" value={lastRowData.site_VercelURL} />
+                      <DetailRow label="Vercel Deploy ID" value={lastRowData.site_VercelDeployID} isMono />
                     </div>
 
                     <div className="pt-2">
                       <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2 text-right opacity-50 italic">Registry Metadata</p>
-                      <DetailRow label="Variables" value={lastRowData.Site_VercelVariables} truncate />
+                      <DetailRow label="Variables" value={lastRowData.site_VercelVariables} truncate />
                     </div>
                     
                     <div className="mt-4 space-y-2">
-                      <ExternalLinkButton label="View Spreadsheet" href={lastRowData.Site_spreadsheetURL} icon={<Copy className="w-3 h-3" />} />
-                      <ExternalLinkButton label="GAS Endpoint" href={lastRowData.Site_gasScriptUrl} icon={<Loader2 className="w-3 h-3" />} />
-                      <ExternalLinkButton label="GAS Exec URL" href={lastRowData.Site_gasScriptExecURL} icon={<RefreshCw className="w-3 h-3" />} />
+                      <ExternalLinkButton label="View Spreadsheet" href={lastRowData.site_spreadsheetURL} icon={<Copy className="w-3 h-3" />} />
+                      <ExternalLinkButton label="GAS Endpoint" href={lastRowData.site_gasScriptUrl} icon={<Loader2 className="w-3 h-3" />} />
+                      <ExternalLinkButton label="GAS Exec URL" href={lastRowData.site_gasScriptExecURL} icon={<RefreshCw className="w-3 h-3" />} />
                     </div>
                   </div>
                 </div>
@@ -511,7 +516,7 @@ export default function App() {
                       <input 
                         type="email" 
                         name="Site_contactEmail"
-                        value={formData.Site_contactEmail}
+                        value={formData.site_contactEmail}
                         onChange={handleInputChange}
                         className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                         placeholder="Owner email for Drive access"
@@ -554,27 +559,27 @@ export default function App() {
                   <div className="md:col-span-2 grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Sheet ID</label>
-                      <input type="text" name="Site_spreadsheetId" value={formData.Site_spreadsheetId} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                      <input type="text" name="Site_spreadsheetId" value={formData.site_spreadsheetId} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Sheet Name</label>
-                      <input type="text" name="Site_spreadsheetName" value={formData.Site_spreadsheetName} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                      <input type="text" name="Site_spreadsheetName" value={formData.site_spreadsheetName} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Sheet URL</label>
-                      <input type="text" name="Site_spreadsheetURL" value={formData.Site_spreadsheetURL} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                      <input type="text" name="Site_spreadsheetURL" value={formData.site_spreadsheetURL} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">GAS Script ID</label>
-                      <input type="text" name="Site_gasScriptID" value={formData.Site_gasScriptID} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                      <input type="text" name="Site_gasScriptID" value={formData.site_gasScriptID} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">GAS Deployment URL</label>
-                      <input type="text" name="Site_gasScriptUrl" value={formData.Site_gasScriptUrl} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                      <input type="text" name="Site_gasScriptUrl" value={formData.site_gasScriptUrl} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">GAS Exec URL</label>
-                      <input type="text" name="Site_gasScriptExecURL" value={formData.Site_gasScriptExecURL} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
+                      <input type="text" name="Site_gasScriptExecURL" value={formData.site_gasScriptExecURL} readOnly className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-[10px] font-mono text-slate-500" />
                     </div>
                   </div>
                 </div>
@@ -632,8 +637,17 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Vercel GitHub Repository</label>
                       <input 
                         type="text" 
-                        name="Site_VercelGitHubRepo"
-                        value={formData.Site_VercelGitHubRepo}
+                        name="site_VercelGitHubRepo"
+                        value={formData.site_VercelGitHubRepo}
+                        onChange={handleInputChange}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none font-medium"
+                        placeholder="e.g. prasad-bh/dyn-template"
+                      />
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Vercel GitHub Repository ID</label>
+                      <input 
+                        type="text" 
+                        name="site_VercelGitHubRepoID"
+                        value={formData.site_VercelGitHubRepoID}
                         onChange={handleInputChange}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none font-medium"
                         placeholder="e.g. prasad-bh/dyn-template"
@@ -644,8 +658,8 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Custom Environment Variables String</label>
                       <input 
                         type="text" 
-                        name="Site_VercelVariables"
-                        value={formData.Site_VercelVariables}
+                        name="site_VercelVariables"
+                        value={formData.site_VercelVariables}
                         onChange={handleInputChange}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none mb-4"
                         placeholder="KEY=VALUE, KEY2=VALUE2"
@@ -702,7 +716,7 @@ export default function App() {
                       <div className="space-y-1">
                         <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Active Deployment ID</p>
                         <p className="text-[10px] font-mono text-slate-300 bg-white/5 p-2 rounded border border-white/5 break-all leading-relaxed">
-                          {lastRowData?.Site_VercelDeployID || 'No active deployment recorded'}
+                          {lastRowData?.site_VercelDeployID || 'No active deployment recorded'}
                         </p>
                       </div>
                       <div className="space-y-1">
@@ -710,12 +724,12 @@ export default function App() {
                         <div className="flex items-center gap-2 bg-blue-500/10 p-2 rounded border border-blue-500/20">
                           <ExternalLink className="w-3 h-3 text-blue-400 shrink-0" />
                           <a 
-                            href={lastRowData?.Site_VercelURL?.startsWith('http') ? lastRowData.Site_VercelURL : `https://${lastRowData?.Site_VercelURL}`} 
+                            href={lastRowData?.site_VercelURL?.startsWith('http') ? lastRowData.site_VercelURL : `https://${lastRowData?.site_VercelURL}`} 
                             target="_blank" 
                             rel="noreferrer" 
                             className="text-[11px] font-mono text-blue-300 hover:text-blue-200 transition-colors truncate"
                           >
-                            {lastRowData?.Site_VercelURL || 'https://---'}
+                            {lastRowData?.site_VercelURL || 'https://---'}
                           </a>
                         </div>
                       </div>
@@ -781,7 +795,7 @@ export default function App() {
                 </div>
                 <div className="flex justify-between text-xs">
                   <span className="text-slate-400">Permissions for</span>
-                  <span className="font-medium">{formData.Site_contactEmail || 'N/A'}</span>
+                  <span className="font-medium">{formData.site_contactEmail || 'N/A'}</span>
                 </div>
               </div>
 

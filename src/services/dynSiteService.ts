@@ -75,7 +75,8 @@ export async function provisionSite(data: AdminSiteData): Promise<ProvisionRespo
 
 export async function deployToVercel(params: {
   projectName: string;
-  gitHubRepo: string;
+  repoName: string;
+  repoId: string;
   envVars: Record<string, string>;
 }): Promise<VercelDeploymentResponse> {
   try {
